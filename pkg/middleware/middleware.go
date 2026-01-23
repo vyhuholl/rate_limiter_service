@@ -11,18 +11,19 @@ import (
 // Middleware wraps an HTTP handler with rate limiting
 type Middleware struct {
 	config             config.Config
-	perEndpointLimiter *PerEndpointLimiter
-	globalLimiter      *GlobalLimiter
-	httpLimiter        *HTTPLimiter
+	perEndpointLimiter PerEndpointLimiterInterface
+	globalLimiter      GlobalLimiterInterface
+	httpLimiter        HTTPLimiterInterface
 }
 
 // NewMiddleware creates a new rate limiting middleware
 func NewMiddleware(cfg config.Config) *Middleware {
+	factory := NewLimiterFactory(cfg)
 	return &Middleware{
 		config:             cfg,
-		perEndpointLimiter: NewPerEndpointLimiter(cfg),
-		globalLimiter:      NewGlobalLimiter(cfg),
-		httpLimiter:        NewHTTPLimiter(cfg),
+		perEndpointLimiter: factory.CreatePerEndpointLimiter(),
+		globalLimiter:      factory.CreateGlobalLimiter(),
+		httpLimiter:        factory.CreateHTTPLimiter(),
 	}
 }
 

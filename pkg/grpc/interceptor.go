@@ -16,28 +16,34 @@ import (
 // Interceptor provides gRPC rate limiting functionality
 type Interceptor struct {
 	config             config.Config
-	globalLimiter      *middleware.GlobalLimiter
-	grpcLimiter        *middleware.GRPCLimiter
-	perMethodLimiter   *GRPCMethodLimiter
+	globalLimiter      middleware.GlobalLimiterInterface
+	grpcLimiter        middleware.GRPCLimiterInterface
+	perMethodLimiter   GRPCMethodLimiterInterface
 }
 
-// GRPCMethodLimiter enforces per-method rate limits for gRPC
-type GRPCMethodLimiter struct {
+// GRPCMethodLimiterInterface defines the interface for gRPC per-method limiters
+type GRPCMethodLimiterInterface interface {
+	Allow(userID, method string) bool
+	Reset()
+}
+
+// InMemoryGRPCMethodLimiter enforces per-method rate limits for gRPC using in-memory storage
+type InMemoryGRPCMethodLimiter struct {
 	config config.Config
 	// buckets stores token buckets keyed by "userID:method"
 	buckets map[string]*middleware.TokenBucket
 }
 
-// NewGRPCMethodLimiter creates a new gRPC per-method rate limiter
-func NewGRPCMethodLimiter(cfg config.Config) *GRPCMethodLimiter {
-	return &GRPCMethodLimiter{
+// NewInMemoryGRPCMethodLimiter creates a new in-memory gRPC per-method rate limiter
+func NewInMemoryGRPCMethodLimiter(cfg config.Config) *InMemoryGRPCMethodLimiter {
+	return &InMemoryGRPCMethodLimiter{
 		config: cfg,
 		buckets: make(map[string]*middleware.TokenBucket),
 	}
 }
 
 // Allow checks if the gRPC request for the given user and method is allowed
-func (gml *GRPCMethodLimiter) Allow(userID, method string) bool {
+func (gml *InMemoryGRPCMethodLimiter) Allow(userID, method string) bool {
 	key := userID + ":" + method
 	bucket, exists := gml.buckets[key]
 	if !exists {
@@ -51,7 +57,7 @@ func (gml *GRPCMethodLimiter) Allow(userID, method string) bool {
 }
 
 // getRateForMethod returns the rate limit for a specific gRPC method
-func (gml *GRPCMethodLimiter) getRateForMethod(method string) int {
+func (gml *InMemoryGRPCMethodLimiter) getRateForMethod(method string) int {
 	if rate, ok := gml.config.GRPCMethods[method]; ok {
 		return rate
 	}
@@ -59,17 +65,18 @@ func (gml *GRPCMethodLimiter) getRateForMethod(method string) int {
 }
 
 // Reset clears all rate limiting state for testing
-func (gml *GRPCMethodLimiter) Reset() {
+func (gml *InMemoryGRPCMethodLimiter) Reset() {
 	gml.buckets = make(map[string]*middleware.TokenBucket)
 }
 
 // NewInterceptor creates a new gRPC rate limiting interceptor
 func NewInterceptor(cfg config.Config) *Interceptor {
+	factory := middleware.NewLimiterFactory(cfg)
 	return &Interceptor{
 		config:           cfg,
-		globalLimiter:    middleware.NewGlobalLimiter(cfg),
-		grpcLimiter:      middleware.NewGRPCLimiter(cfg),
-		perMethodLimiter: NewGRPCMethodLimiter(cfg),
+		globalLimiter:    factory.CreateGlobalLimiter(),
+		grpcLimiter:      factory.CreateGRPCLimiter(),
+		perMethodLimiter: NewInMemoryGRPCMethodLimiter(cfg),
 	}
 }
 

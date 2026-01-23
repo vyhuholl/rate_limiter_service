@@ -17,6 +17,14 @@ rate_limits:
     methods:
       /UserService/GetUser: 15
       /UserService/CreateUser: 3
-user_identification:
-  http_header: X-User-ID
-  grpc_metadata_key: user-id
+  user_identification:
+    http_header: X-User-ID
+    grpc_metadata_key: user-id
+  # Memcache configuration (optional - enables distributed rate limiting)
+  memcache:
+    servers:
+      - localhost:11211
+    timeout: 100ms
+    max_idle_connections: 100
+    failure_mode: allow  # or "deny" for fail-closed
+    key_prefix: rate_limit

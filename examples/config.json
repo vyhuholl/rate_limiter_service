@@ -27,5 +27,12 @@
   "user_identification": {
     "http_header": "X-User-ID",
     "grpc_metadata_key": "user-id"
+  },
+  "memcache": {
+    "servers": ["localhost:11211"],
+    "timeout": "100ms",
+    "max_idle_connections": 100,
+    "failure_mode": "allow",
+    "key_prefix": "rate_limit"
   }
 }

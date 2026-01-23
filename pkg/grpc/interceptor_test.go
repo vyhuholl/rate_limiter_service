@@ -137,14 +137,14 @@ func TestInterceptor_ExtractUserID(t *testing.T) {
 	}
 }
 
-func TestGRPCMethodLimiter_Allow(t *testing.T) {
+func TestInMemoryGRPCMethodLimiter_Allow(t *testing.T) {
 	cfg := config.Config{
 		GRPCBurstSize:         2,
 		GRPCDefaultMethodRate: 2,
 		GRPCMethods:           map[string]int{"/TestService/TestMethod": 5},
 	}
 
-	limiter := NewGRPCMethodLimiter(cfg)
+	limiter := NewInMemoryGRPCMethodLimiter(cfg)
 
 	userID := "user123"
 
@@ -161,7 +161,7 @@ func TestGRPCMethodLimiter_Allow(t *testing.T) {
 
 	// Test configured method rate
 	cfg.GRPCBurstSize = 3
-	limiter2 := NewGRPCMethodLimiter(cfg)
+	limiter2 := NewInMemoryGRPCMethodLimiter(cfg)
 
 	for i := 0; i < 3; i++ {
 		if !limiter2.Allow(userID, "/TestService/TestMethod") {

@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -41,7 +42,27 @@ type Config struct {
 	GRPCMethods map[string]int
 	// GRPCDefaultMethodRate is the default rate for gRPC methods not explicitly configured
 	GRPCDefaultMethodRate int
+	// MemcacheServers is the list of Memcache server addresses
+	MemcacheServers []string
+	// MemcacheTimeout is the timeout for Memcache operations
+	MemcacheTimeout time.Duration
+	// MemcacheMaxIdleConns is the maximum number of idle connections to Memcache
+	MemcacheMaxIdleConns int
+	// MemcacheFailureMode determines behavior when Memcache is unavailable
+	MemcacheFailureMode FailureMode
+	// MemcacheKeyPrefix is the prefix for Memcache keys
+	MemcacheKeyPrefix string
 }
+
+// FailureMode defines the behavior when Memcache is unavailable
+type FailureMode string
+
+const (
+	// FailureModeAllow allows requests when Memcache is unavailable (fail-open)
+	FailureModeAllow FailureMode = "allow"
+	// FailureModeDeny denies requests when Memcache is unavailable (fail-closed)
+	FailureModeDeny FailureMode = "deny"
+)
 
 // FileConfig represents the structure of the configuration file
 type FileConfig struct {
@@ -67,6 +88,13 @@ type FileConfig struct {
 		HTTPHeader     string `json:"http_header" yaml:"http_header"`
 		GRPCMetadataKey string `json:"grpc_metadata_key" yaml:"grpc_metadata_key"`
 	} `json:"user_identification" yaml:"user_identification"`
+	Memcache struct {
+		Servers          []string `json:"servers" yaml:"servers"`
+		Timeout          string   `json:"timeout" yaml:"timeout"`
+		MaxIdleConns     int      `json:"max_idle_connections" yaml:"max_idle_connections"`
+		FailureMode      string   `json:"failure_mode" yaml:"failure_mode"`
+		KeyPrefix        string   `json:"key_prefix" yaml:"key_prefix"`
+	} `json:"memcache" yaml:"memcache"`
 }
 
 // DefaultConfig returns the default configuration values
@@ -84,6 +112,11 @@ func DefaultConfig() Config {
 		GRPCBurstSize:         5,
 		HTTPDefaultMethodRate: 10,
 		GRPCDefaultMethodRate: 10,
+		MemcacheServers:       nil, // Empty means distributed rate limiting is disabled
+		MemcacheTimeout:       100 * time.Millisecond,
+		MemcacheMaxIdleConns:  100,
+		MemcacheFailureMode:   FailureModeAllow,
+		MemcacheKeyPrefix:     "rate_limit",
 	}
 }
 
@@ -162,6 +195,61 @@ func loadAdvancedEnvConfig(config *Config) error {
 	return nil
 }
 
+// loadMemcacheEnvConfig loads Memcache configuration from environment variables
+func loadMemcacheEnvConfig(config *Config) error {
+	var err error
+
+	// Load Memcache servers
+	if servers := os.Getenv("MEMCACHE_SERVERS"); servers != "" {
+		config.MemcacheServers = splitServers(servers)
+	}
+
+	// Load Memcache timeout
+	if timeout := os.Getenv("MEMCACHE_TIMEOUT"); timeout != "" {
+		config.MemcacheTimeout, err = time.ParseDuration(timeout)
+		if err != nil {
+			return fmt.Errorf("invalid MEMCACHE_TIMEOUT value %q: %w", timeout, err)
+		}
+	}
+
+	// Load Memcache max idle connections
+	if maxIdle := os.Getenv("MEMCACHE_MAX_IDLE_CONNECTIONS"); maxIdle != "" {
+		if config.MemcacheMaxIdleConns, err = strconv.Atoi(maxIdle); err != nil {
+			return fmt.Errorf("invalid MEMCACHE_MAX_IDLE_CONNECTIONS value %q: %w", maxIdle, err)
+		}
+		if config.MemcacheMaxIdleConns <= 0 {
+			return fmt.Errorf("MEMCACHE_MAX_IDLE_CONNECTIONS must be positive, got %d", config.MemcacheMaxIdleConns)
+		}
+	}
+
+	// Load Memcache failure mode
+	if failureMode := os.Getenv("MEMCACHE_FAILURE_MODE"); failureMode != "" {
+		switch FailureMode(failureMode) {
+		case FailureModeAllow, FailureModeDeny:
+			config.MemcacheFailureMode = FailureMode(failureMode)
+		default:
+			return fmt.Errorf("invalid MEMCACHE_FAILURE_MODE value %q, must be 'allow' or 'deny'", failureMode)
+		}
+	}
+
+	// Load Memcache key prefix
+	config.MemcacheKeyPrefix = loadEnvString("MEMCACHE_KEY_PREFIX", config.MemcacheKeyPrefix)
+
+	return nil
+}
+
+// splitServers splits a comma-separated list of server addresses
+func splitServers(servers string) []string {
+	var result []string
+	for _, s := range strings.Split(servers, ",") {
+		s = strings.TrimSpace(s)
+		if s != "" {
+			result = append(result, s)
+		}
+	}
+	return result
+}
+
 // loadEnvString loads a string value from environment variable
 func loadEnvString(envVar, defaultValue string) string {
 	if value := os.Getenv(envVar); value != "" {
@@ -179,6 +267,10 @@ func LoadFromEnv() (Config, error) {
 	}
 
 	if err := loadAdvancedEnvConfig(&config); err != nil {
+		return config, err
+	}
+
+	if err := loadMemcacheEnvConfig(&config); err != nil {
 		return config, err
 	}
 
@@ -326,6 +418,36 @@ func validateAndConvertFileConfig(config *Config, fileConfig *FileConfig) error 
 	config.PerEndpointRate = config.HTTPDefaultMethodRate
 	config.PerEndpointBurstSize = config.HTTPBurstSize
 
+	// Memcache configuration
+	if len(fileConfig.Memcache.Servers) > 0 {
+		config.MemcacheServers = fileConfig.Memcache.Servers
+
+		if fileConfig.Memcache.Timeout != "" {
+			timeout, err := time.ParseDuration(fileConfig.Memcache.Timeout)
+			if err != nil {
+				return fmt.Errorf("invalid memcache timeout %q: %w", fileConfig.Memcache.Timeout, err)
+			}
+			config.MemcacheTimeout = timeout
+		}
+
+		if fileConfig.Memcache.MaxIdleConns > 0 {
+			config.MemcacheMaxIdleConns = fileConfig.Memcache.MaxIdleConns
+		}
+
+		if fileConfig.Memcache.FailureMode != "" {
+			switch FailureMode(fileConfig.Memcache.FailureMode) {
+			case FailureModeAllow, FailureModeDeny:
+				config.MemcacheFailureMode = FailureMode(fileConfig.Memcache.FailureMode)
+			default:
+				return fmt.Errorf("invalid memcache failure mode %q, must be 'allow' or 'deny'", fileConfig.Memcache.FailureMode)
+			}
+		}
+
+		if fileConfig.Memcache.KeyPrefix != "" {
+			config.MemcacheKeyPrefix = fileConfig.Memcache.KeyPrefix
+		}
+	}
+
 	return nil
 }
 
@@ -347,4 +469,19 @@ func (c Config) GetRefillInterval(rate int) time.Duration {
 	// rate tokens per second = rate tokens / 1000000000 nanoseconds
 	refillInterval := int64(time.Second) / int64(rate)
 	return time.Duration(refillInterval)
+}
+
+// IsDistributedEnabled returns true if distributed rate limiting is enabled
+func (c Config) IsDistributedEnabled() bool {
+	return len(c.MemcacheServers) > 0
+}
+
+// GetMemcacheKey generates a Memcache key for rate limiting
+// Key format: {prefix}:{scope}:{user_id}:{identifier}
+func (c Config) GetMemcacheKey(scope, userID, identifier string) string {
+	key := fmt.Sprintf("%s:%s:%s", c.MemcacheKeyPrefix, scope, userID)
+	if identifier != "" {
+		key = fmt.Sprintf("%s:%s", key, identifier)
+	}
+	return key
 }

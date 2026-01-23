@@ -7,12 +7,15 @@ A reusable rate limiting service for Go applications supporting both HTTP and gR
 - **Three-Tier Rate Limiting**: Global, HTTP-only, and gRPC-only limits
 - **Per-Method Rate Limiting**: Separate rate limits for each HTTP endpoint or gRPC method per user
 - **Global Rate Limiting**: Overall rate limits across all requests per user
-- **Token Bucket Algorithm**: Smooth rate limiting with burst capacity
+- **Token Bucket Algorithm**: Smooth rate limiting with burst capacity (in-memory) or sliding window counter (distributed)
+- **Distributed Rate Limiting**: Optional Memcache-backed distributed rate limiting for multi-instance deployments
+- **Configurable Failure Modes**: Fail-open (allow) or fail-closed (deny) when Memcache is unavailable
 - **Configurable User Identification**: Identify users via HTTP headers or gRPC metadata
 - **HTTP 429 Responses**: Proper rate limit exceeded responses with headers
 - **gRPC ResourceExhausted Status**: Proper gRPC error responses
 - **Configuration Files**: JSON/YAML configuration support
 - **Thread-Safe**: Concurrent request handling
+- **Backward Compatible**: In-memory limiters used by default, Memcache is opt-in
 
 ## Configuration
 
@@ -32,10 +35,32 @@ Configure rate limits using environment variables or JSON/YAML configuration fil
 | `RATE_LIMIT_GRPC_RATE` | gRPC requests per second per user | `50` |
 | `RATE_LIMIT_GRPC_BURST_SIZE` | gRPC burst capacity | `5` |
 | `RATE_LIMIT_BURST_SIZE` | Legacy burst capacity for both limiters | `10` |
+| `MEMCACHE_SERVERS` | Comma-separated Memcache server addresses (enables distributed rate limiting) | - |
+| `MEMCACHE_TIMEOUT` | Memcache operation timeout | `100ms` |
+| `MEMCACHE_MAX_IDLE_CONNECTIONS` | Maximum idle connections to Memcache | `100` |
+| `MEMCACHE_FAILURE_MODE` | Behavior when Memcache unavailable: `allow` (fail-open) or `deny` (fail-closed) | `allow` |
+| `MEMCACHE_KEY_PREFIX` | Prefix for Memcache keys | `rate_limit` |
 
 ### Configuration File
 
 Use `RATE_LIMIT_CONFIG_PATH` to specify a JSON or YAML configuration file. See `examples/config.json` and `examples/config.yaml` for format examples.
+
+#### Memcache Configuration (Optional)
+
+When `MEMCACHE_SERVERS` is configured, the service uses distributed rate limiting via Memcache instead of in-memory token buckets. This is useful for multi-instance deployments where you need coordinated rate limiting.
+
+**Memcache Key Format**: `{prefix}:{scope}:{user_id}:{identifier}`
+- Example: `rate_limit:global:user123:`
+- Example: `rate_limit:endpoint:user123:GET:/api/users`
+
+**Failure Modes**:
+- `allow` (fail-open): Allow requests when Memcache is unavailable. Use this for high availability.
+- `deny` (fail-closed): Deny requests when Memcache is unavailable. Use this for strict rate limiting.
+
+**Performance Considerations**:
+- Distributed rate limiting adds a Memcache round-trip to each request
+- Consider monitoring Memcache health and setting up alerts
+- For high-traffic scenarios, ensure Memcache has sufficient capacity
 
 ## Usage
 
