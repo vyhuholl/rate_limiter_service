@@ -1,0 +1,31 @@
+{
+  "rate_limits": {
+    "global": {
+      "rate": 100,
+      "burst": 10
+    },
+    "http": {
+      "rate": 50,
+      "burst": 5,
+      "default_method_rate": 10,
+      "methods": {
+        "GET /api/users": 20,
+        "POST /api/users": 5,
+        "DELETE /api/users": 2
+      }
+    },
+    "grpc": {
+      "rate": 30,
+      "burst": 3,
+      "default_method_rate": 5,
+      "methods": {
+        "/UserService/GetUser": 15,
+        "/UserService/CreateUser": 3
+      }
+    }
+  },
+  "user_identification": {
+    "http_header": "X-User-ID",
+    "grpc_metadata_key": "user-id"
+  }
+}

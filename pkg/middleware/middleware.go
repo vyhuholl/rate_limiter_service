@@ -10,17 +10,19 @@ import (
 
 // Middleware wraps an HTTP handler with rate limiting
 type Middleware struct {
-	config         config.Config
+	config             config.Config
 	perEndpointLimiter *PerEndpointLimiter
-	globalLimiter   *GlobalLimiter
+	globalLimiter      *GlobalLimiter
+	httpLimiter        *HTTPLimiter
 }
 
 // NewMiddleware creates a new rate limiting middleware
 func NewMiddleware(cfg config.Config) *Middleware {
 	return &Middleware{
-		config:         cfg,
+		config:             cfg,
 		perEndpointLimiter: NewPerEndpointLimiter(cfg),
-		globalLimiter:   NewGlobalLimiter(cfg),
+		globalLimiter:      NewGlobalLimiter(cfg),
+		httpLimiter:        NewHTTPLimiter(cfg),
 	}
 }
 
@@ -35,9 +37,15 @@ func (m *Middleware) Handler(next http.Handler) http.Handler {
 			return
 		}
 
-		// Check per-endpoint limit
+		// Check HTTP-only limit
+		if !m.httpLimiter.Allow(userID) {
+			m.writeRateLimitResponse(w, "http")
+			return
+		}
+
+		// Check per-method limit
 		if !m.perEndpointLimiter.Allow(userID, r.Method, r.URL.Path) {
-			m.writeRateLimitResponse(w, "per-endpoint")
+			m.writeRateLimitResponse(w, "per-method")
 			return
 		}
 
@@ -78,8 +86,10 @@ func (m *Middleware) getRateLimitForType(limitType string) int {
 	switch limitType {
 	case "global":
 		return m.config.GlobalRate
-	case "per-endpoint":
-		return m.config.PerEndpointRate
+	case "http":
+		return m.config.HTTPRate
+	case "per-method":
+		return m.config.HTTPDefaultMethodRate
 	default:
 		return 0
 	}
@@ -102,4 +112,5 @@ func (m *Middleware) getRetryAfterSeconds() int {
 func (m *Middleware) Reset() {
 	m.perEndpointLimiter.Reset()
 	m.globalLimiter.Reset()
+	m.httpLimiter.Reset()
 }

@@ -24,8 +24,9 @@ func TestNewMiddleware(t *testing.T) {
 		t.Fatal("NewMiddleware returned nil")
 	}
 
-	if middleware.config != cfg {
-		t.Errorf("config not set correctly")
+	// Check that config is set (can't compare structs with maps directly)
+	if middleware.config.UserHeader != cfg.UserHeader {
+		t.Errorf("config UserHeader not set correctly")
 	}
 
 	if middleware.perEndpointLimiter == nil {
@@ -34,6 +35,10 @@ func TestNewMiddleware(t *testing.T) {
 
 	if middleware.globalLimiter == nil {
 		t.Error("globalLimiter not initialized")
+	}
+
+	if middleware.httpLimiter == nil {
+		t.Error("httpLimiter not initialized")
 	}
 }
 
@@ -44,6 +49,9 @@ func TestMiddleware_Handler_Allow(t *testing.T) {
 		GlobalRate:            100,
 		GlobalBurstSize:       10,
 		PerEndpointBurstSize:  10,
+		HTTPRate:              50,
+		HTTPBurstSize:         5,
+		HTTPDefaultMethodRate: 10,
 	}
 
 	middleware := NewMiddleware(cfg)
@@ -78,6 +86,9 @@ func TestMiddleware_Handler_GlobalLimitExceeded(t *testing.T) {
 		GlobalRate:            1, // Only 1 request per second globally
 		GlobalBurstSize:       1,
 		PerEndpointBurstSize:  10,
+		HTTPRate:              100, // High HTTP rate so global limit is hit first
+		HTTPBurstSize:         10,
+		HTTPDefaultMethodRate: 10,
 	}
 
 	middleware := NewMiddleware(cfg)
@@ -126,6 +137,9 @@ func TestMiddleware_Handler_PerEndpointLimitExceeded(t *testing.T) {
 		GlobalRate:            100,
 		GlobalBurstSize:       10,
 		PerEndpointBurstSize:  1,
+		HTTPRate:              100, // High HTTP rate so per-method limit is hit first
+		HTTPBurstSize:         10,
+		HTTPDefaultMethodRate: 1,
 	}
 
 	middleware := NewMiddleware(cfg)
@@ -158,8 +172,8 @@ func TestMiddleware_Handler_PerEndpointLimitExceeded(t *testing.T) {
 		t.Errorf("Second request should be rate limited, got status %d", w2.Code)
 	}
 
-	if !strings.Contains(w2.Body.String(), "per-endpoint") {
-		t.Errorf("Response should indicate per-endpoint limit, got: %s", w2.Body.String())
+	if !strings.Contains(w2.Body.String(), "per-method") {
+		t.Errorf("Response should indicate per-method limit, got: %s", w2.Body.String())
 	}
 
 	// Request to different endpoint should be allowed
@@ -176,7 +190,10 @@ func TestMiddleware_Handler_PerEndpointLimitExceeded(t *testing.T) {
 
 func TestMiddleware_ExtractUserID(t *testing.T) {
 	cfg := config.Config{
-		UserHeader: "X-Custom-User",
+		UserHeader:           "X-Custom-User",
+		HTTPRate:             50,
+		HTTPBurstSize:        5,
+		HTTPDefaultMethodRate: 10,
 	}
 
 	middleware := NewMiddleware(cfg)
@@ -225,6 +242,9 @@ func TestMiddleware_Handler_RateLimitHeaders(t *testing.T) {
 		GlobalRate:            100,
 		GlobalBurstSize:       10,
 		PerEndpointBurstSize:  1,
+		HTTPRate:              100,
+		HTTPBurstSize:         10,
+		HTTPDefaultMethodRate: 1,
 	}
 
 	middleware := NewMiddleware(cfg)

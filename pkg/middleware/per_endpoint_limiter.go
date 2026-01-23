@@ -31,29 +31,41 @@ func (pel *PerEndpointLimiter) Allow(userID, method, path string) bool {
 	bucketKey := fmt.Sprintf("%s:%s", userID, endpointKey)
 
 	// Get or create bucket for this user-endpoint combination
-	bucket := pel.getOrCreateBucket(bucketKey)
+	bucket := pel.getOrCreateBucket(bucketKey, endpointKey)
 
 	return bucket.Allow()
 }
 
 // getOrCreateBucket retrieves or creates a token bucket for the given key
-func (pel *PerEndpointLimiter) getOrCreateBucket(key string) *TokenBucket {
+func (pel *PerEndpointLimiter) getOrCreateBucket(bucketKey, endpointKey string) *TokenBucket {
 	// Try to load existing bucket
-	if bucket, ok := pel.buckets.Load(key); ok {
+	if bucket, ok := pel.buckets.Load(bucketKey); ok {
 		return bucket.(*TokenBucket)
 	}
 
+	// Determine rate for this endpoint
+	rate := pel.getRateForEndpoint(endpointKey)
+	burstSize := pel.config.PerEndpointBurstSize
+
 	// Create new bucket
-	bucket := NewTokenBucket(pel.config.PerEndpointBurstSize, pel.config.PerEndpointRate)
+	bucket := NewTokenBucket(burstSize, rate)
 
 	// Store it (may have been created by another goroutine in the meantime)
-	actual, loaded := pel.buckets.LoadOrStore(key, bucket)
+	actual, loaded := pel.buckets.LoadOrStore(bucketKey, bucket)
 	if loaded {
 		// Another goroutine created it, return that one instead
 		return actual.(*TokenBucket)
 	}
 
 	return bucket
+}
+
+// getRateForEndpoint returns the rate limit for a specific endpoint, falling back to default
+func (pel *PerEndpointLimiter) getRateForEndpoint(endpointKey string) int {
+	if rate, ok := pel.config.HTTPMethods[endpointKey]; ok {
+		return rate
+	}
+	return pel.config.HTTPDefaultMethodRate
 }
 
 // GetRemainingTokens returns the number of remaining tokens for a user-endpoint combination
